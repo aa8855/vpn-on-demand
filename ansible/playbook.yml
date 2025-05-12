@@ -1,0 +1,8 @@
+---
+- name: Configure WireGuard VPN Server
+  hosts: vpn_server
+  become: yes
+  gather_facts: yes
+  
+  roles:
+    - role: wireguard_server

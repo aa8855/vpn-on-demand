@@ -1,0 +1,124 @@
+name: Manage Hetzner VPN On-Demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform: create or destroy'
+        required: true
+        type: choice
+        options:
+          - plan_create
+          - plan_destroy
+          - create
+          - destroy
+        default: 'create'
+
+jobs:
+  terraform:
+    name: 'Terraform VPN Management'
+    runs-on: ubuntu-latest
+    outputs:
+      vpn_server_ip: ${{ steps.apply.outputs.vpn_server_public_ip }}
+      action_performed: ${{ github.event.inputs.action }}
+    env:
+      TF_VAR_hcloud_token: ${{ secrets.TF_HCLOUD_TOKEN }}
+      TF_VAR_cloudflare_token: ${{ secrets.TF_CLOUDFLARE_TOKEN }}
+      TF_VAR_cloudflare_zone_id: ${{ vars.TF_VAR_CLOUDFLARE_ZONE_ID }}
+      TF_VAR_domain_name: ${{ vars.TF_VAR_CLOUDFLARE_DOMAIN_NAME }}
+      TF_VAR_ssh_key_name: ${{ vars.TF_VAR_HCLOUD_SSH_KEY_NAME }}
+      TF_VAR_username: ${{ vars.TF_VAR_USERNAME }}
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_app_terraform_io }}
+      TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
+      TF_WORKSPACE: ${{ vars.TF_WORKSPACE }}
+      TF_VAR_ansible_ssh_pubkey: ${{ secrets.TF_VAR_ANSIBLE_SSH_PUBKEY }}
+      TF_VAR_WIREGUARD_PORT: ${{ vars.TF_VAR_WIREGUARD_PORT }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        cli_config_credentials_token: ${{ secrets.TF_TOKEN_app_terraform_io }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      id: init
+      run: terraform init
+
+    - name: Terraform Plan Create
+      if: github.event.inputs.action == 'plan_create'
+      id: plan_create
+      run: terraform plan
+      
+    - name: Terraform Apply (Create VPN)
+      if: github.event.inputs.action == 'create'
+      id: apply
+      run: |
+        terraform apply -auto-approve
+        VPN_IP=$(terraform output -raw vpn_server_public_ip)
+        echo "vpn_server_public_ip=$VPN_IP" >> $GITHUB_OUTPUT
+
+    - name: Terraform Plan Destroy
+      if: github.event.inputs.action == 'plan_destroy'
+      id: plan_destroy
+      run: terraform plan -destroy
+      
+    - name: Terraform Destroy (Destroy VPN)
+      if: github.event.inputs.action == 'destroy'
+      id: destroy
+      run: terraform destroy -auto-approve
+  
+  ansible_configure:
+    name: 'Ansible Configure WireGuard'
+    runs-on: ubuntu-latest
+    needs: terraform 
+    if: success() && needs.terraform.outputs.action_performed == 'create' && needs.terraform.outputs.vpn_server_ip != ''
+    env:
+      ANSIBLE_HOST_KEY_CHECKING: 'False'
+      ANSIBLE_FORCE_COLOR: 'True'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Ansible
+      run: |
+        python -m pip install --upgrade pip
+        pip install ansible
+
+    - name: Prepare SSH Key for Ansible
+      env:
+        ANSIBLE_SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+      run: |
+        mkdir -p ~/.ssh
+        echo "$ANSIBLE_SSH_KEY" > ~/.ssh/ansible_hetzner_vpn
+        chmod 600 ~/.ssh/ansible_hetzner_vpn
+
+    - name: Create Ansible Inventory
+      env:
+        VPN_SERVER_IP: ${{ needs.terraform.outputs.vpn_server_ip }}
+      run: |
+        echo "[vpn_server]" > ansible/inventory.ini
+        echo "$VPN_SERVER_IP ansible_user=ansible ansible_ssh_private_key_file=~/.ssh/ansible_hetzner_vpn" >> ansible/inventory.ini
+        echo "Inventory created for IP: $VPN_SERVER_IP"
+        cat ansible/inventory.ini
+          
+    - name: Wait for Wireguard server boot up
+      uses: GuillaumeFalourd/wait-sleep-action@v1
+      with:
+        time: '60s'
+
+    - name: Run Ansible Playbook
+      env:
+        VPN_SERVER_IP: ${{ needs.terraform.outputs.vpn_server_ip }}
+        WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
+        WG_CLIENT_PUBLIC_KEY: ${{ secrets.WG_CLIENT_PUBLIC_KEY }}
+        wireguard_listen_port: ${{ vars.TF_VAR_WIREGUARD_PORT }}
+      run: ansible-playbook ansible/playbook.yml -i ansible/inventory.ini
+
+    - name: Clean up SSH key
+      if: always()
+      run: rm -f ~/.ssh/ansible_hetzner_vpn

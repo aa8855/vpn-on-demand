@@ -1,0 +1,10 @@
+[Interface]
+Address = {{ wireguard_server_interface_address }}
+ListenPort = {{ wireguard_listen_port }}
+PrivateKey = {{ wg_server_private_key }}
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+[Peer]
+PublicKey = {{ client_wireguard_public_key }}
+AllowedIPs = {{ client_allowed_ips }}

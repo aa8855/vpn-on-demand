@@ -1,0 +1,5 @@
+---
+wg_server_private_key: "{{ lookup('env', 'WG_SERVER_PRIVATE_KEY') }}"
+client_wireguard_public_key: "{{ lookup('env', 'WG_CLIENT_PUBLIC_KEY') }}"
+wireguard_server_public_ip: "{{ lookup('env', 'VPN_SERVER_IP') }}"
+wireguard_listen_port: "{{ lookup('env', 'wireguard_listen_port')}}"
