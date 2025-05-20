@@ -57,3 +57,8 @@ variable "ansible_ssh_pubkey" {
   type        = string
   sensitive   = true
 }
+variable "vpn_server_name" {
+  description = "Name of the VPN server"
+  type        = string
+  default     = "vpn-server-on-demand"
+}

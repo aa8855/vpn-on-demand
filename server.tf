@@ -3,7 +3,7 @@ data "hcloud_ssh_key" "default" {
 }
 
 resource "hcloud_server" "vpn_server" {
-  name        = "vpn-server-on-demand"
+  name        = var.vpn_server_name
   server_type = var.server_type
   image       = var.hcloud_image
   location    = var.location
